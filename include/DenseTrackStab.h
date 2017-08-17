@@ -1,6 +1,7 @@
 #ifndef DENSETRACKSTAB_H_
 #define DENSETRACKSTAB_H_
 
+#include <mlpack/core.hpp>
 #include <opencv/cv.h>
 #include <opencv/highgui.h>
 #include <opencv/cxcore.h>

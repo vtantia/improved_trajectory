@@ -6,10 +6,137 @@
 
 using namespace cv;
 
+clock_t start, end;
+double elapsed_secs;
+double total_elapsed_secs;
+int count = 0;
+
+std::pair<double,double> find_mean_variance(arma::mat &H, arma::mat &left, arma::mat &right, arma::mat &predict_right, arma::mat &diff) {
+
+    double error = 0;
+    double sqsum=0;
+    for (int i=0; i<right.n_rows; i++) {
+        double k = diff(i,0)*diff(i,0) + diff(i,1)*diff(i,1) + diff(i,2)*diff(i,2);
+        error += k;
+        sqsum += k*k;
+    }
+    double mean = error/right.n_rows;
+    double variance = sqsum/right.n_rows - mean*mean;
+
+    return std::make_pair(mean, variance);
+}
+
+cv::Mat findHomographyOurs(std::vector<cv::Point2f> prev_pts, std::vector<cv::Point2f> pts) {
+    arma::mat left = arma::ones(prev_pts.size(), 3);
+    arma::mat right = left;
+    //printf("%d %d\n", left.n_rows, left.n_cols);
+    //printf("%d %d\n", right.n_rows, right.n_cols);
+    arma::uword cnt = 0;
+    for (auto pt: prev_pts) {
+        double x = pt.x;
+        double y = pt.y;
+
+        //printf("left %d 0 1\n",cnt);
+        left(cnt,0) = x;
+        left(cnt,1) = y;
+        cnt ++;
+    }
+
+    cnt = 0;
+    for (auto pt: pts) {
+        double x = pt.x;
+        double y = pt.y;
+
+        //printf("right %d 0 1\n",cnt);
+        right(cnt,0) = x;
+        right(cnt,1) = y;
+        cnt ++;
+    }
+
+    double outlier_ratio;
+    arma::mat H;
+    int iter = 0;
+    do {
+        H = arma::pinv(left)*right;
+
+        arma::mat predict_right = left*H;
+        arma::mat diff = predict_right - right;
+        std::pair<double, double> mean_variance = find_mean_variance(H, left, right, predict_right, diff);
+        double mean = mean_variance.first;
+        double variance = mean_variance.second;
+
+        //arma::mat new_left = left, new_right = right;
+        double threshold = mean + sqrt(variance);
+        //printf("Mean: %lf Variance:%lf Threshold:%lf\n", mean, variance, threshold);
+        int from_loc = 0, to_loc = 0;
+        std::vector< std::pair<double, int> > errors;
+        for (int i=0; i<left.n_rows; i++) {
+            //double error = diff(i) * diff(i);
+            double error = diff(i,0)*diff(i,0) + diff(i,1)*diff(i,1) + diff(i,2)*diff(i,2);
+            errors.push_back( std::make_pair(error, i) );
+            if (error > threshold)
+                to_loc ++;
+            else {
+                from_loc++;
+                to_loc++;
+                //new_left(to_loc++) = left(from_loc++);
+                //new_right(to_loc++) = right(from_loc++);
+            }
+        }
+        sort(errors.begin(), errors.end());
+        int len = errors.size();
+        int keep_len = 0.9*len;
+        arma::mat new_left(keep_len, 3), new_right(keep_len, 3);
+        for (int i=0; i<keep_len; i++) {
+            for (int j=0; j<3; j++) {
+                new_left(i,j) = left(errors[i].second,j);
+                new_right(i,j) = right(errors[i].second,j);
+            }
+        }
+
+        outlier_ratio = ((double)(from_loc))/to_loc;
+        left = new_left;
+        right = new_right;
+        //printf("Outliers: %d Total: %d Ratio: %lf\n", from_loc, to_loc, outlier_ratio);
+        iter++;
+    } while (iter < 4);
+
+
+        //for(int i=0; i<3; i++) {
+            //for (int j=0; j<3; j++)
+                //printf("%lf ", H(i,j));
+            //printf("\n\n");
+        //}
+    cv::Mat opencv_H(3, 3, CV_64FC1, H.memptr());
+    //for(int i=0; i<3; i++)
+        //for(int j=0; j<3; j++)
+            //opencv_H.at<double>(i,j) = H(i,j);
+    return opencv_H;
+}
+
+void print_matrix(Mat mat_print) {
+    for (int i = 0; i < 3; i++) {
+        for (int j=0; j<3; j++)
+            printf("%lf ", mat_print.at<double>(i,j));
+        printf("\n");
+    }
+}
+
+void print_time(int line) {
+    count++;
+    end = clock();
+    elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
+    //printf("Line %d: %d: %lf\n", line, count, elapsed_secs);
+    //fflush(stdout);
+}
+
 int main(int argc, char** argv)
 {
 	// IO operation
+        start = clock();
+
 	
+        print_time(__LINE__);
 	const char* keys =
 		{
 			"{ f  | video_file     | test.avi | filename of video }"
@@ -43,6 +170,7 @@ int main(int argc, char** argv)
 	FILE* outfile = fopen(out_file.c_str(), "wb");
 	FILE* trafile = fopen(tra_file.c_str(), "wb");
 
+        print_time(__LINE__);
 	VideoCapture capture;
 	capture.open(video);
 	if(!capture.isOpened()) {
@@ -50,6 +178,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
+        print_time(__LINE__);
 	float frame_num = 0;
 	TrackInfo trackInfo;
 	DescInfo hogInfo, hofInfo, mbhInfo;
@@ -60,6 +189,7 @@ int main(int argc, char** argv)
 	InitDescInfo(&mbhInfo, 8, false, patch_size, nxy_cell, nt_cell);
 
 
+        print_time(__LINE__);
 	SeqInfo seqInfo;
 	InitSeqInfo(&seqInfo, video.c_str());
 
@@ -72,7 +202,8 @@ int main(int argc, char** argv)
 	//if(flag)
 		 // seqInfo.length = end_frame - start_frame + 1;
     
-	printf( "video size, length: %d, width: %d, height: %d\n", seqInfo.length, seqInfo.width, seqInfo.height);
+        print_time(__LINE__);
+        printf( "video size, length: %d, width: %d, height: %d\n", seqInfo.length, seqInfo.width, seqInfo.height);
 
 	if(show_track == 1)
 		namedWindow("DenseTrackStab", 0);
@@ -98,12 +229,15 @@ int main(int argc, char** argv)
 
 	std::vector<std::list<Track> > xyScaleTracks;
 	int init_counter = 0; // indicate when to detect new feature points
+        print_time(__LINE__);
 	while(true) {
 		Mat frame;
 		int i, j, c;
 
 		// get a new frame
+                print_time(__LINE__);
 		capture >> frame;
+                print_time(__LINE__);
 		if(frame.empty())
 			break;
 
@@ -112,51 +246,65 @@ int main(int argc, char** argv)
 			continue;
 		}
 
+                print_time(__LINE__);
 		if(frame_num == start_frame) {
+                        print_time(__LINE__);
 			image.create(frame.size(), CV_8UC3);
 			grey.create(frame.size(), CV_8UC1);
 			prev_grey.create(frame.size(), CV_8UC1);
+                        print_time(__LINE__);
 
 			InitPry(frame, fscales, sizes);
 
+                        print_time(__LINE__);
 			BuildPry(sizes, CV_8UC1, prev_grey_pyr);
 			BuildPry(sizes, CV_8UC1, grey_pyr);
 			BuildPry(sizes, CV_32FC2, flow_pyr);
 			BuildPry(sizes, CV_32FC2, flow_warp_pyr);
 
+                        print_time(__LINE__);
 			BuildPry(sizes, CV_32FC(5), prev_poly_pyr);
 			BuildPry(sizes, CV_32FC(5), poly_pyr);
 			BuildPry(sizes, CV_32FC(5), poly_warp_pyr);
 
+                        print_time(__LINE__);
 			xyScaleTracks.resize(scale_num);
 
+                        print_time(__LINE__);
 			frame.copyTo(image);
 			cvtColor(image, prev_grey, CV_BGR2GRAY);
 
+                        print_time(__LINE__);
 			for(int iScale = 0; iScale < scale_num; iScale++) {
+                                print_time(__LINE__);
 				if(iScale == 0)
 					prev_grey.copyTo(prev_grey_pyr[0]);
 				else
 					resize(prev_grey_pyr[iScale-1], prev_grey_pyr[iScale], prev_grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
 
 				// dense sampling feature points
+                                print_time(__LINE__);
 				std::vector<Point2f> points(0);
 				DenseSample(prev_grey_pyr[iScale], points, quality, min_distance);
 
 				// save the feature points
+                                print_time(__LINE__);
 				std::list<Track>& tracks = xyScaleTracks[iScale];
 				for(i = 0; i < points.size(); i++)
 					tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
 			}
 
 			// compute polynomial expansion
+                        print_time(__LINE__);
 			my::FarnebackPolyExpPyr(prev_grey, prev_poly_pyr, fscales, 7, 1.5);
 
 			human_mask = Mat::ones(frame.size(), CV_8UC1);
 			if(bb_file)
 				InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
 
+                        print_time(__LINE__);
 			detector_surf.detect(prev_grey, prev_kpts_surf, human_mask);
+                        print_time(__LINE__);
 			extractor_surf.compute(prev_grey, prev_kpts_surf, prev_desc_surf);
 
 			frame_num++;
@@ -164,33 +312,48 @@ int main(int argc, char** argv)
 		}
 
 		init_counter++;
+                print_time(__LINE__);
 		frame.copyTo(image);
+                print_time(__LINE__);
 		cvtColor(image, grey, CV_BGR2GRAY);
 
 		// match surf features
+                print_time(__LINE__);
 		if(bb_file)
 			InitMaskWithBox(human_mask, bb_list[frame_num].BBs);
 		detector_surf.detect(grey, kpts_surf, human_mask);
 		extractor_surf.compute(grey, kpts_surf, desc_surf);
 		ComputeMatch(prev_kpts_surf, kpts_surf, prev_desc_surf, desc_surf, prev_pts_surf, pts_surf);
+                print_time(__LINE__);
 
 		// compute optical flow for all scales once
+                print_time(__LINE__);
 		my::FarnebackPolyExpPyr(grey, poly_pyr, fscales, 7, 1.5);
 		my::calcOpticalFlowFarneback(prev_poly_pyr, poly_pyr, flow_pyr, 10, 2);
 
+                print_time(__LINE__);
 		MatchFromFlow(prev_grey, flow_pyr[0], prev_pts_flow, pts_flow, human_mask);
+                print_time(__LINE__);
 		MergeMatch(prev_pts_flow, pts_flow, prev_pts_surf, pts_surf, prev_pts_all, pts_all);
 
 		Mat H = Mat::eye(3, 3, CV_64FC1);
 		if(pts_all.size() > 50) {
 			std::vector<unsigned char> match_mask;
-			Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
+                        start = clock();
+                        //Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
+                        end = clock();
+                        elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
+                        total_elapsed_secs += elapsed_secs;
+                        printf("Elapsed seconds: %lf\n", elapsed_secs);
+                        Mat temp = findHomographyOurs(prev_pts_all, pts_all);
 			if(countNonZero(Mat(match_mask)) > 25)
 				H = temp;
 		}
 
+                print_time(__LINE__);
 		Mat H_inv = H.inv();
 		Mat grey_warp = Mat::zeros(grey.size(), CV_8UC1);
+                print_time(__LINE__);
 		MyWarpPerspective(prev_grey, grey, grey_warp, H_inv); // warp the second frame
 
 		// compute optical flow for all scales once
@@ -198,12 +361,15 @@ int main(int argc, char** argv)
 		my::calcOpticalFlowFarneback(prev_poly_pyr, poly_warp_pyr, flow_warp_pyr, 10, 2);
 
 
+                print_time(__LINE__);
 		for(int iScale = 0; iScale < scale_num; iScale++) {
+                        print_time(__LINE__);
 			if(iScale == 0)
 				grey.copyTo(grey_pyr[0]);
 			else
 				resize(grey_pyr[iScale-1], grey_pyr[iScale], grey_pyr[iScale].size(), 0, 0, INTER_LINEAR);
 
+                        print_time(__LINE__);
 			int width = grey_pyr[iScale].cols;
 			int height = grey_pyr[iScale].rows;
 
@@ -211,15 +377,18 @@ int main(int argc, char** argv)
 			DescMat* hogMat = InitDescMat(height+1, width+1, hogInfo.nBins);
 			HogComp(prev_grey_pyr[iScale], hogMat->desc, hogInfo);
 
+                        print_time(__LINE__);
 			DescMat* hofMat = InitDescMat(height+1, width+1, hofInfo.nBins);
 			HofComp(flow_warp_pyr[iScale], hofMat->desc, hofInfo);
 
+                        print_time(__LINE__);
 			DescMat* mbhMatX = InitDescMat(height+1, width+1, mbhInfo.nBins);
 			DescMat* mbhMatY = InitDescMat(height+1, width+1, mbhInfo.nBins);
 			MbhComp(flow_warp_pyr[iScale], mbhMatX->desc, mbhMatY->desc, mbhInfo);
 
 			// track feature points in each scale separately
 			std::list<Track>& tracks = xyScaleTracks[iScale];
+                        print_time(__LINE__);
 			for (std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end();) {
 				int index = iTrack->index;
 				Point2f prev_point = iTrack->point[index];
@@ -239,6 +408,7 @@ int main(int argc, char** argv)
 				iTrack->disp[index].y = flow_warp_pyr[iScale].ptr<float>(y)[2*x+1];
 
 				// get the descriptors for the feature point
+                                print_time(__LINE__);
 				RectInfo rect;
 				GetRect(prev_point, rect, width, height, hogInfo);
 				GetDesc(hogMat, rect, hogInfo, iTrack->hog, index);
@@ -247,11 +417,13 @@ int main(int argc, char** argv)
 				GetDesc(mbhMatY, rect, mbhInfo, iTrack->mbhY, index);
 				iTrack->addPoint(point);
 
+                                print_time(__LINE__);
 				// draw the trajectories at the first scale
 				//if(show_track == 1 && iScale == 0)
 				//	DrawTrack(iTrack->point, iTrack->index, fscales[iScale], image);
 
 				// if the trajectory achieves the maximal length
+                                print_time(__LINE__);
 				if(iTrack->index >= trackInfo.length) {
         
 					std::vector<Point2f> trajectory(trackInfo.length+1), trajectory1(trackInfo.length+1);
@@ -261,6 +433,7 @@ int main(int argc, char** argv)
 					}
 				
 					std::vector<Point2f> displacement(trackInfo.length);
+                                        print_time(__LINE__);
 					for (int i = 0; i < trackInfo.length; ++i)
 						displacement[i] = iTrack->disp[i]*fscales[iScale];
 	
@@ -270,6 +443,7 @@ int main(int argc, char** argv)
 							DrawTrack(iTrack->point, iTrack->index, fscales[iScale], image);
 
 						// output the basic information
+                                                print_time(__LINE__);
 						fwrite(&frame_num,sizeof(frame_num),1,outfile);
 						fwrite(&mean_x,sizeof(mean_x),1,outfile);
 						fwrite(&mean_y,sizeof(mean_y),1,outfile);
@@ -277,6 +451,7 @@ int main(int argc, char** argv)
 						fwrite(&var_y,sizeof(var_y),1,outfile);
 						fwrite(&length,sizeof(var_y),1,outfile);
 						float cscale = fscales[iScale];
+                                                print_time(__LINE__);
 						fwrite(&cscale,sizeof(cscale),1,outfile);
 
 						// for spatio-temporal pyramid
@@ -288,6 +463,7 @@ int main(int argc, char** argv)
 						fwrite(&temp,sizeof(temp),1,outfile);
 					
 						// output trajectory point coordinates
+                                                print_time(__LINE__);
  				                for (int i=0; i< trackInfo.length; ++ i){
 							temp = trajectory1[i].x;
 							fwrite(&temp, sizeof(temp), 1, outfile);
@@ -295,6 +471,7 @@ int main(int argc, char** argv)
 							temp = trajectory1[i].y;
 							fwrite(&temp, sizeof(temp), 1, outfile);
 							fwrite(&temp, sizeof(temp), 1, trafile);
+                                                        print_time(__LINE__);
 						}
               
 						// output the trajectory features
@@ -303,33 +480,40 @@ int main(int argc, char** argv)
 							fwrite(&temp,sizeof(temp),1,outfile);
 							temp = displacement[i].y;
 							fwrite(&temp,sizeof(temp),1,outfile);
+                                                        print_time(__LINE__);
 						}
 
 						PrintDesc(iTrack->hog, hogInfo, trackInfo, outfile);
 						PrintDesc(iTrack->hof, hofInfo, trackInfo, outfile);
 						PrintDesc(iTrack->mbhX, mbhInfo, trackInfo, outfile);
 						PrintDesc(iTrack->mbhY, mbhInfo, trackInfo, outfile);
+                                                print_time(__LINE__);
 					}
 
 					iTrack = tracks.erase(iTrack);
+                                        print_time(__LINE__);
 					continue;
 				}
 				++iTrack;
 			}
+                        print_time(__LINE__);
 			ReleDescMat(hogMat);
 			ReleDescMat(hofMat);
 			ReleDescMat(mbhMatX);
 			ReleDescMat(mbhMatY);
+                        print_time(__LINE__);
 
 			if(init_counter != trackInfo.gap)
 				continue;
 
 			// detect new feature points every gap frames
+                        print_time(__LINE__);
 			std::vector<Point2f> points(0);
 			for(std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); iTrack++)
 				points.push_back(iTrack->point[iTrack->index]);
 
 			DenseSample(grey_pyr[iScale], points, quality, min_distance);
+                        print_time(__LINE__);
 			// save the new feature points
 			for(i = 0; i < points.size(); i++)
 				tracks.push_back(Track(points[i], trackInfo, hogInfo, hofInfo, mbhInfo));
@@ -337,6 +521,7 @@ int main(int argc, char** argv)
 
 		init_counter = 0;
 		grey.copyTo(prev_grey);
+                print_time(__LINE__);
 		for(i = 0; i < scale_num; i++) {
 			grey_pyr[i].copyTo(prev_grey_pyr[i]);
 			poly_pyr[i].copyTo(prev_poly_pyr[i]);
@@ -344,8 +529,10 @@ int main(int argc, char** argv)
 
 		prev_kpts_surf = kpts_surf;
 		desc_surf.copyTo(prev_desc_surf);
+                print_time(__LINE__);
 
 		frame_num++;
+                print_time(__LINE__);
 
 		if( show_track == 1 ) {
 			imshow( "DenseTrackStab", image);
@@ -358,11 +545,13 @@ int main(int argc, char** argv)
 
 	if( show_track == 1 )
 		destroyWindow("DenseTrackStab");
+        print_time(__LINE__);
 
 	fclose(outfile);
 	fclose(trafile);
 //	fclose(flowx);
 //	fclose(flowy);
 
+        printf("Total elapsed_secs: %lf\n", total_elapsed_secs);
 	return 0;
 }
