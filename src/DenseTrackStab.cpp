@@ -152,6 +152,7 @@ int main(int argc, char** argv)
 			"{ A  | scale_num  | 8 | num of scales }"
 			"{ I  | init_gap  | 1 | gap }"
 			"{ T  | show_track | 0 | whether show tracks}"
+                        "{ h  | use_new_homography_method | false | whether to use our homography method }"
 		};
 	CommandLineParser cmd(argc, argv, keys);
 	string video = cmd.get<string>("video_file");
@@ -166,6 +167,7 @@ int main(int argc, char** argv)
 	nt_cell = cmd.get<int>("nt_cell");
 	scale_num = cmd.get<int>("scale_num");
 	init_gap = cmd.get<int>("init_gap");
+        bool use_new_homography_method = cmd.get<bool>("use_new_homography_method");
 
 	FILE* outfile = fopen(out_file.c_str(), "wb");
 	FILE* trafile = fopen(tra_file.c_str(), "wb");
@@ -340,12 +342,15 @@ int main(int argc, char** argv)
 		if(pts_all.size() > 50) {
 			std::vector<unsigned char> match_mask;
                         start = clock();
-                        //Mat temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
+                        Mat temp;
+                        if (use_new_homography_method)
+                            temp = findHomographyOurs(prev_pts_all, pts_all);
+                        else
+                            temp = findHomography(prev_pts_all, pts_all, RANSAC, 1, match_mask);
                         end = clock();
                         elapsed_secs = double(end - start) / CLOCKS_PER_SEC;
                         total_elapsed_secs += elapsed_secs;
                         printf("Elapsed seconds: %lf\n", elapsed_secs);
-                        Mat temp = findHomographyOurs(prev_pts_all, pts_all);
 			if(countNonZero(Mat(match_mask)) > 25)
 				H = temp;
 		}
